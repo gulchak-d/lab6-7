@@ -71,7 +71,7 @@ resource "aws_instance" "app_server" {
               echo "from flask import Flask" > /home/ubuntu/app.py
               echo "app = Flask(__name__)" >> /home/ubuntu/app.py
               echo "@app.route('/')" >> /home/ubuntu/app.py
-              echo "def hello(): return '<h1>Hello from EC2! Lab 6-7 completed WITHOUT Lightsail.</h1>'" >> /home/ubuntu/app.py
+              echo "def hello(): return '<h1> Lab 6-7 completed </h1>'" >> /home/ubuntu/app.py
               echo "if __name__ == '__main__': app.run(host='0.0.0.0', port=5000)" >> /home/ubuntu/app.py
               
               nohup python3 /home/ubuntu/app.py &
