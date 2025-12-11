@@ -5,12 +5,11 @@ terraform {
       version = "~> 4.0"
     }
   }
-  # Налаштування бекенду з вашими даними
   backend "s3" {
-    bucket         = "lab6-terraform-gulchak"  # <-- Ваш бакет
+    bucket         = "lab6-terraform-gulchak"
     key            = "terraform.tfstate"
     region         = "eu-central-1"
-    dynamodb_table = "terraform-locks"         # <-- Ваша таблиця
+    dynamodb_table = "terraform-locks"
     encrypt        = true
   }
 }
@@ -75,7 +74,7 @@ resource "aws_iam_instance_profile" "ec2_profile" {
 }
 
 resource "aws_instance" "app_server" {
-  ami           = "ami-0a261c0e5f51090b1" # Amazon Linux 2023 (eu-central-1)
+  ami           = "ami-0a261c0e5f51090b1"
   instance_type = "t3.micro"
   
   vpc_security_group_ids = [aws_security_group.web_sg.id]
@@ -83,16 +82,32 @@ resource "aws_instance" "app_server" {
 
   user_data = <<-EOF
               #!/bin/bash
-              dnf update -y
-              dnf install -y docker
-              systemctl start docker
-              systemctl enable docker
-
-              sleep 10
+              exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
               
-              aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin ${aws_ecr_repository.app_repo.repository_url}
+              echo "Start installing on Amazon Linux 2..."
+              
+              yum update -y
+              amazon-linux-extras install docker -y
+              
+              service docker start
+              usermod -a -G docker ec2-user
+              chkconfig docker on
+              
+              echo "Waiting for IAM role propagation..."
+              sleep 30
+              
+              for i in {1..5}
+              do
+                aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin ${aws_ecr_repository.app_repo.repository_url} && break
+                echo "Login failed, retrying in 5s..."
+                sleep 5
+              done
+
+              echo "Pulling image..."
               docker pull ${aws_ecr_repository.app_repo.repository_url}:latest
-              docker run -d -p 5000:5000 ${aws_ecr_repository.app_repo.repository_url}:latest
+              
+              echo "Running container..."
+              docker run -d --restart always -p 5000:5000 ${aws_ecr_repository.app_repo.repository_url}:latest
               EOF
 
   tags = {
