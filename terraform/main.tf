@@ -2,15 +2,16 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 4.0"
     }
   }
-  
+  # Налаштування бекенду з вашими даними
   backend "s3" {
-    bucket         = "laba-6-7-daria"
+    bucket         = "lab6-terraform-gulchak"  # <-- Ваш бакет
     key            = "terraform.tfstate"
     region         = "eu-central-1"
-    dynamodb_table = "lab-my-tf-lockid"
+    dynamodb_table = "terraform-locks"         # <-- Ваша таблиця
+    encrypt        = true
   }
 }
 
@@ -18,33 +19,26 @@ provider "aws" {
   region = "eu-central-1"
 }
 
-data "aws_ami" "ubuntu" {
-  most_recent = true
-  filter {
-    name   = "name"
-    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
-  }
-  filter {
-    name   = "virtualization-type"
-    values = ["hvm"]
-  }
-  owners = ["099720109477"] # Canonical
+resource "aws_ecr_repository" "app_repo" {
+  name                 = "stack-orders-repo"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
 }
 
 resource "aws_security_group" "web_sg" {
-  name        = "flask-security-group"
-  description = "Allow HTTP traffic"
+  name        = "flask-stack-sg"
+  description = "Allow HTTP 5000 and SSH"
+
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
 
   ingress {
     from_port   = 5000
     to_port     = 5000
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-  
-  ingress {
-    from_port   = 22
-    to_port     = 22
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
@@ -57,31 +51,59 @@ resource "aws_security_group" "web_sg" {
   }
 }
 
+resource "aws_iam_role" "ec2_role" {
+  name = "ec2_stack_app_role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ecr_readonly" {
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+resource "aws_iam_instance_profile" "ec2_profile" {
+  name = "ec2_stack_profile"
+  role = aws_iam_role.ec2_role.name
+}
+
 resource "aws_instance" "app_server" {
-  ami           = data.aws_ami.ubuntu.id
-  instance_type = "t3.micro" 
-  security_groups = [aws_security_group.web_sg.name]
+  ami           = "ami-0a261c0e5f51090b1" # Amazon Linux 2023 (eu-central-1)
+  instance_type = "t2.micro"
+  
+  vpc_security_group_ids = [aws_security_group.web_sg.id]
+  iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
 
   user_data = <<-EOF
               #!/bin/bash
-              sudo apt-get update
-              sudo apt-get install -y python3-pip
-              pip3 install flask
+              dnf update -y
+              dnf install -y docker
+              systemctl start docker
+              systemctl enable docker
+
+              sleep 10
               
-              echo "from flask import Flask" > /home/ubuntu/app.py
-              echo "app = Flask(__name__)" >> /home/ubuntu/app.py
-              echo "@app.route('/')" >> /home/ubuntu/app.py
-              echo "def hello(): return '<h1> Lab 6-7 completed </h1>'" >> /home/ubuntu/app.py
-              echo "if __name__ == '__main__': app.run(host='0.0.0.0', port=5000)" >> /home/ubuntu/app.py
-              
-              nohup python3 /home/ubuntu/app.py &
+              aws ecr get-login-password --region eu-central-1 | docker login --username AWS --password-stdin ${aws_ecr_repository.app_repo.repository_url}
+              docker pull ${aws_ecr_repository.app_repo.repository_url}:latest
+              docker run -d -p 5000:5000 ${aws_ecr_repository.app_repo.repository_url}:latest
               EOF
 
   tags = {
-    Name = "Lab6-7-EC2"
+    Name = "Stack-Order-App"
   }
 }
 
-output "public_ip" {
-  value = "http://${aws_instance.app_server.public_ip}:5000"
+output "instance_public_ip" {
+  value = aws_instance.app_server.public_ip
+}
+
+output "ecr_url" {
+  value = aws_ecr_repository.app_repo.repository_url
 }

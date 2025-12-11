@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <title>Стек Замовлень</title>
+    <style>
+        body { font-family: sans-serif; margin: 20px; background-color: #f4f4f4; }
+        .container { max-width: 700px; margin: auto; background-color: #fff; padding: 20px; border-radius: 8px; }
+        .order { border: 1px solid #ccc; padding: 10px; margin-bottom: 5px; border-radius: 4px; }
+        .forms { display: flex; gap: 30px; margin-bottom: 20px; padding-bottom: 20px; border-bottom: 2px solid #eee; }
+        h1, h2 { color: #333; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Stack</h1>
+
+        <div class="forms">
+            <form action="/add" method="POST">
+                <h3>Push:</h3>
+                <label for="item">item:</label>
+                <input type="text" id="item" name="item" required>
+                <label for="quantity">quantity:</label>
+                <input type="number" id="quantity" name="quantity" value="1" min="1">
+                <button type="submit">+</button>
+            </form>
+
+            <form action="/pop" method="POST">
+                <h3>Pop:</h3>
+                <button type="submit">to process</button>
+            </form>
+        </div>
+
+        <h2>orders:</h2>
+        
+        {% if not orders %}
+            <p>empty</p>
+        {% else %}
+            {% for order in orders %}
+                <div class="order">
+                    <strong>ID: {{ order.id }}</strong><br>
+                    item: {{ order.item }}<br>
+                    quantity: {{ order.quantity }}
+                </div>
+            {% endfor %}
+        {% endif %}
+    </div>
+</body>
+</html>
