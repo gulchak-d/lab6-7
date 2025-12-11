@@ -1,4 +1,4 @@
-name: Deploy Stack App to EC2
+name: CI/CD Pipeline
 
 on:
   push:
@@ -7,59 +7,104 @@ on:
 permissions:
   contents: read
 
+env:
+  AWS_REGION: eu-central-1
+  ECR_REPOSITORY: stack-orders-repo
+
 jobs:
-  deploy:
-    name: Deploy Infrastructure & App
+  test:
+    name: Run Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.9"
+      
+      - name: Install dependencies
+        run: |
+          pip install flask
+      
+      - name: Smoke Test (Import Check)
+        run: |
+          cd app
+          python -c "from app import app; print('App imported successfully')"
+
+  terraform-plan:
+    name: Terraform Plan
+    needs: test              
     runs-on: ubuntu-latest
     env:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: eu-central-1
-
+    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
+      - uses: actions/checkout@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
+      
+      - name: Terraform Init
+        run: terraform init
+        working-directory: ./terraform
+        
+      - name: Terraform Plan
+        run: terraform plan
+        working-directory: ./terraform
 
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v1
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: eu-central-1
+  deploy:
+    name: Build & Deploy
+    needs: [test, terraform-plan]
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+    
+    steps:
+      - uses: actions/checkout@v3
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
-      with:
-        terraform_wrapper: false
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
 
-    - name: Terraform Init
-      run: terraform init
-      working-directory: ./terraform
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
 
-    - name: Terraform Apply
-      run: terraform apply -auto-approve
-      working-directory: ./terraform
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_wrapper: false
 
-    - name: Get ECR URL
-      id: get-ecr
-      run: |
-        echo "ECR_REGISTRY=$(terraform output -raw ecr_url)" >> $GITHUB_ENV
-      working-directory: ./terraform
+      - name: Terraform Init & Apply
+        run: |
+          cd terraform
+          terraform init
+          terraform apply -auto-approve
 
-    - name: Login to Amazon ECR
-      id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v1
+      - name: Get ECR URL
+        id: get-ecr
+        run: |
+          echo "ECR_REGISTRY=$(terraform output -raw ecr_url)" >> $GITHUB_ENV
+        working-directory: ./terraform
 
-    - name: Build and Push Docker Image
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        IMAGE_TAG: latest
-      run: |
-        docker build -t $ECR_REGISTRY/stack-orders-repo:$IMAGE_TAG ./app
-        docker push $ECR_REGISTRY/stack-orders-repo:$IMAGE_TAG
+      - name: Build and Push Docker Image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: latest
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG ./app
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-    - name: Redeploy EC2
-      run: |
-        terraform taint aws_instance.app_server
-        terraform apply -auto-approve
-      working-directory: ./terraform
+      - name: Update EC2
+        run: |
+          cd terraform
+          terraform taint aws_instance.app_server
+          terraform apply -auto-approve
