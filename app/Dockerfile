@@ -1,6 +1,6 @@
-FROM alpine:latest
-RUN apk add --update python3 py3-pip py3-flask
+FROM python:3.9-slim
 WORKDIR /app
 COPY . .
+RUN pip install flask
 EXPOSE 5000
-CMD ["python3", "app.py"]
+CMD ["python", "app.py"]
