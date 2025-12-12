@@ -83,11 +83,10 @@ jobs:
         with:
           terraform_wrapper: false
 
-      - name: Terraform Init & Apply
-        run: |
-          cd terraform
-          terraform init
-          terraform apply -auto-approve
+     # - name: Terraform Init & Apply
+     #    cd terraform
+      #    terraform init
+       #   terraform apply -auto-approve
 
       - name: Get ECR URL
         id: get-ecr
